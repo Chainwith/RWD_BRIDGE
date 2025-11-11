@@ -16,7 +16,7 @@ module oft::oft_adapter_fa {
     use std::signer::address_of;
 
     use endpoint_v2_common::bytes32::Bytes32;
-    use oft::oapp_core::{assert_admin, combine_options};
+    use oft::oapp_core::{assert_admin, combine_options, get_admin};
     use oft::oapp_store::OAPP_ADDRESS;
     use oft::oft_core;
     use oft::oft_impl_config::{
@@ -24,7 +24,9 @@ module oft::oft_adapter_fa {
         assert_not_blocklisted,
         debit_view_with_possible_fee,
         fee_details_with_possible_fee,
-        redirect_to_admin_if_blocklisted, release_rate_limit_capacity, try_consume_rate_limit_capacity
+        redirect_to_admin_if_blocklisted,
+        release_rate_limit_capacity,
+        try_consume_rate_limit_capacity
     };
     use oft_common::oft_fee_detail::OftFeeDetail;
     use oft_common::oft_limit::{Self, OftLimit};
@@ -37,7 +39,7 @@ module oft::oft_adapter_fa {
 
     struct OftImpl has key {
         metadata: Option<Object<Metadata>>,
-        escrow_extend_ref: ExtendRef,
+        escrow_extend_ref: ExtendRef
     }
 
     // ================================================= OFT Handlers =================================================
@@ -47,16 +49,20 @@ module oft::oft_adapter_fa {
         to: address,
         amount_ld: u64,
         src_eid: u32,
-        lz_receive_value: Option<FungibleAsset>,
+        lz_receive_value: Option<FungibleAsset>
     ): u64 acquires OftImpl {
         // Default implementation does not make special use of LZ Receive Value sent; just deposit to the OFT address
-        option::for_each(lz_receive_value, |fa| primary_fungible_store::deposit(@oft_admin, fa));
+        option::for_each(
+            lz_receive_value,
+            |fa| primary_fungible_store::deposit(get_admin(), fa)
+        );
 
         // Release rate limit capacity for the pathway (net inflow)
         release_rate_limit_capacity(src_eid, amount_ld);
 
         // unlock the amount from escrow
-        let escrow_signer = &object::generate_signer_for_extending(&store().escrow_extend_ref);
+        let escrow_signer =
+            &object::generate_signer_for_extending(&store().escrow_extend_ref);
 
         // Deposit the extracted amount to the recipient, or redirect to the admin if the recipient is blocklisted
         primary_fungible_store::transfer(
@@ -76,14 +82,15 @@ module oft::oft_adapter_fa {
         sender: address,
         fa: &mut FungibleAsset,
         min_amount_ld: u64,
-        dst_eid: u32,
+        dst_eid: u32
     ): (u64, u64) acquires OftImpl {
         assert_not_blocklisted(sender);
         assert_metadata(fa);
 
         // Calculate the exact send amount
         let amount_ld = fungible_asset::amount(fa);
-        let (amount_sent_ld, amount_received_ld) = debit_view(amount_ld, min_amount_ld, dst_eid);
+        let (amount_sent_ld, amount_received_ld) =
+            debit_view(amount_ld, min_amount_ld, dst_eid);
 
         // Consume rate limit capacity for the pathway (net outflow), based on the amount received on the other side
         try_consume_rate_limit_capacity(dst_eid, amount_received_ld);
@@ -110,14 +117,16 @@ module oft::oft_adapter_fa {
         _sender: address,
         _coin: &mut Coin<CoinType>,
         _min_amount_ld: u64,
-        _dst_eid: u32,
+        _dst_eid: u32
     ): (u64, u64) {
         abort ENOT_IMPLEMENTED
     }
 
     /// The default *debit_view* behavior for an Adapter OFT is to remove dust and use remainder as both the sent and
     /// received amounts, reflecting that no additional fees are removed
-    public(friend) fun debit_view(amount_ld: u64, min_amount_ld: u64, _dst_eid: u32): (u64, u64) {
+    public(friend) fun debit_view(
+        amount_ld: u64, min_amount_ld: u64, _dst_eid: u32
+    ): (u64, u64) {
         debit_view_with_possible_fee(amount_ld, min_amount_ld)
     }
 
@@ -130,16 +139,14 @@ module oft::oft_adapter_fa {
         _amount_received_ld: u64,
         _to: Bytes32,
         _compose_msg: vector<u8>,
-        _oft_cmd: vector<u8>,
+        _oft_cmd: vector<u8>
     ): vector<u8> {
         combine_options(dst_eid, message_type, extra_options)
     }
 
     /// Implement this function to inspect the message and options before quoting and sending
     public(friend) fun inspect_message(
-        _message: &vector<u8>,
-        _options: &vector<u8>,
-        _is_sending: bool,
+        _message: &vector<u8>, _options: &vector<u8>, _is_sending: bool
     ) {}
 
     /// Change this to override the OFT limit and fees provided when quoting. The fees should reflect the difference
@@ -151,20 +158,27 @@ module oft::oft_adapter_fa {
         min_amount_ld: u64,
         _extra_options: vector<u8>,
         _compose_msg: vector<u8>,
-        _oft_cmd: vector<u8>,
+        _oft_cmd: vector<u8>
     ): (OftLimit, vector<OftFeeDetail>) {
-        (rate_limited_oft_limit(dst_eid), fee_details_with_possible_fee(amount_ld, min_amount_ld))
+        (
+            rate_limited_oft_limit(dst_eid),
+            fee_details_with_possible_fee(amount_ld, min_amount_ld)
+        )
     }
 
     // =========================================== Coin Deposit / Withdrawal ==========================================
 
     /// Deposit coin function abstracted from `oft.move` for cross-chain flexibility
-    public(friend) fun deposit_coin<CoinType>(_account: address, _coin: Coin<CoinType>) {
+    public(friend) fun deposit_coin<CoinType>(
+        _account: address, _coin: Coin<CoinType>
+    ) {
         abort ENOT_IMPLEMENTED
     }
 
     /// Withdraw coin function abstracted from `oft.move` for cross-chain flexibility
-    public(friend) fun withdraw_coin<CoinType>(_account: &signer, _amount_ld: u64): Coin<CoinType> {
+    public(friend) fun withdraw_coin<CoinType>(
+        _account: &signer, _amount_ld: u64
+    ): Coin<CoinType> {
         abort ENOT_IMPLEMENTED
     }
 
@@ -200,17 +214,23 @@ module oft::oft_adapter_fa {
 
     #[view]
     /// Get the fee (in BPS) for outbound OFT sends
-    public fun fee_bps(): u64 { oft_impl_config::fee_bps() }
+    public fun fee_bps(): u64 {
+        oft_impl_config::fee_bps()
+    }
 
     /// Set the fee deposit address for outbound OFT sends
-    public entry fun set_fee_deposit_address(admin: &signer, fee_deposit_address: address) {
+    public entry fun set_fee_deposit_address(
+        admin: &signer, fee_deposit_address: address
+    ) {
         assert_admin(address_of(admin));
         oft_impl_config::set_fee_deposit_address(fee_deposit_address);
     }
 
     #[view]
     /// Get the fee deposit address for outbound OFT sends
-    public fun fee_deposit_address(): address { oft_impl_config::fee_deposit_address() }
+    public fun fee_deposit_address(): address {
+        oft_impl_config::fee_deposit_address()
+    }
 
     /// Permanently disable the ability to blocklist addresses
     public entry fun irrevocably_disable_blocklist(admin: &signer) {
@@ -222,14 +242,18 @@ module oft::oft_adapter_fa {
     /// If a wallet is blocklisted
     /// - OFT sends from the wallet will be blocked
     /// - OFT receives to the wallet will be be diverted to the admin
-    public entry fun set_blocklist(admin: &signer, wallet: address, block: bool) {
+    public entry fun set_blocklist(
+        admin: &signer, wallet: address, block: bool
+    ) {
         assert_admin(address_of(admin));
         oft_impl_config::set_blocklist(wallet, block);
     }
 
     #[view]
     /// Get the blocklist status of a wallet address
-    public fun is_blocklisted(wallet: address): bool { oft_impl_config::is_blocklisted(wallet) }
+    public fun is_blocklisted(wallet: address): bool {
+        oft_impl_config::is_blocklisted(wallet)
+    }
 
     /// Set the rate limit configuration for a given endpoint ID
     /// The rate limit is the maximum amount of OFT that can be sent to the endpoint within a given window
@@ -238,7 +262,12 @@ module oft::oft_adapter_fa {
     /// decayed rate limit consumption). This means that if the rate limit is set lower than the current in-flight
     /// volume, the endpoint will not be able to receive OFT until the in-flight volume decays below the new rate limit.
     /// In order to reset the in-flight volume, the rate limit must be unset and then set again.
-    public entry fun set_rate_limit(admin: &signer, eid: u32, limit: u64, window_seconds: u64) {
+    public entry fun set_rate_limit(
+        admin: &signer,
+        eid: u32,
+        limit: u64,
+        window_seconds: u64
+    ) {
         assert_admin(address_of(admin));
         oft_impl_config::set_rate_limit(eid, limit, window_seconds);
     }
@@ -252,15 +281,21 @@ module oft::oft_adapter_fa {
     #[view]
     /// Get the rate limit configuration for a given endpoint ID
     /// @return (limit, window_seconds)
-    public fun rate_limit_config(eid: u32): (u64, u64) { oft_impl_config::rate_limit_config(eid) }
+    public fun rate_limit_config(eid: u32): (u64, u64) {
+        oft_impl_config::rate_limit_config(eid)
+    }
 
     #[view]
     /// Get the amount of rate limit capacity currently consumed on this pathway
-    public fun rate_limit_in_flight(eid: u32): u64 { oft_impl_config::in_flight(eid) }
+    public fun rate_limit_in_flight(eid: u32): u64 {
+        oft_impl_config::in_flight(eid)
+    }
 
     #[view]
     /// Get the rate limit capacity for a given endpoint ID
-    public fun rate_limit_capacity(eid: u32): u64 { oft_impl_config::rate_limit_capacity(eid) }
+    public fun rate_limit_capacity(eid: u32): u64 {
+        oft_impl_config::rate_limit_capacity(eid)
+    }
 
     /// Create an OftLimit that reflects the rate limit for a given endpoint ID
     public fun rate_limited_oft_limit(eid: u32): OftLimit {
@@ -277,15 +312,16 @@ module oft::oft_adapter_fa {
     // ================================================ Initialization ================================================
 
     public entry fun initialize(
-        account: &signer,
-        token_metadata_address: address,
-        shared_decimals: u8
+        account: &signer, token_metadata_address: address, shared_decimals: u8
     ) acquires OftImpl {
         // Only the admin can initialize the OFT
         assert_admin(address_of(account));
 
         // Ensure the metadata address provided is valid and store it
-        assert!(object_exists<Metadata>(token_metadata_address), EINVALID_METADATA_ADDRESS);
+        assert!(
+            object_exists<Metadata>(token_metadata_address),
+            EINVALID_METADATA_ADDRESS
+        );
         let metadata = address_to_object<Metadata>(token_metadata_address);
         store_mut().metadata = option::some(metadata);
 
@@ -300,13 +336,17 @@ module oft::oft_adapter_fa {
         let escrow_extend_ref = object::generate_extend_ref(constructor_ref);
 
         // Disown the escrow object to prevent withdrawal by transient owner
-        object::transfer(account, object::object_from_constructor_ref<ObjectCore>(constructor_ref), @0x0);
+        object::transfer(
+            account,
+            object::object_from_constructor_ref<ObjectCore>(constructor_ref),
+            @0x0
+        );
 
         // Initialize the storage and save the ExtendRef for future signer generation
-        move_to(move account, OftImpl {
-            metadata: option::none(),
-            escrow_extend_ref,
-        });
+        move_to(
+            move account,
+            OftImpl { metadata: option::none(), escrow_extend_ref }
+        );
     }
 
     #[test_only]
@@ -335,3 +375,4 @@ module oft::oft_adapter_fa {
     const ENOT_IMPLEMENTED: u64 = 2;
     const EWRONG_FA_METADATA: u64 = 3;
 }
+
